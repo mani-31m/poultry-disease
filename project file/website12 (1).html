@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Poultry Health Assistant</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter for consistent typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        /* Apply the Inter font to the entire body */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Basic CSS animation for the loading spinner */
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-green-50 to-blue-100 flex items-center justify-center p-4 font-sans">
+    <div id="app" class="bg-white rounded-2xl shadow-xl p-6 md:p-8 w-full max-w-2xl border border-gray-200">
+        <!-- Content will be dynamically rendered here by JavaScript -->
+        <!-- This is where the 'Get Diagnosis' button and other elements will be placed by renderApp() -->
+    </div>
+
+    <script>
+        // Global state variables for the application
+        let selectedImage = null;       // Stores the File object of the uploaded image
+        let imagePreviewUrl = null;     // Stores the URL for displaying the image preview
+        let diagnosis = '';             // Stores the AI-generated diagnosis
+        let treatment = '';             // Stores the AI-generated treatment suggestion
+        let isLoading = false;          // Boolean to indicate if an API call is in progress
+        let error = '';                 // Stores any error messages to display to the user
+
+        // Sample image data for demonstration purposes.
+        // The 'expectedDiagnosis' and 'expectedTreatment' simulate the output
+        // of a pre-trained model for these specific sample inputs.
+        const sampleImages = [
+            {
+                name: "Healthy Chicken",
+                url: "https://placehold.co/150x150/dbeafe/1e40af?text=Healthy",
+                mimeType: "image/png",
+                expectedDiagnosis: "Healthy poultry",
+                expectedTreatment: "Maintain good hygiene, balanced nutrition, and monitor regularly."
+            },
+            {
+                name: "Sick Chicken (Salmonella)",
+                url: "https://placehold.co/150x150/fee2e2/dc2626?text=Salmonella",
+                mimeType: "image/png",
+                expectedDiagnosis: "Salmonella",
+                expectedTreatment: "Isolate affected birds. Administer antibiotics under veterinary guidance. Thoroughly clean and disinfect coops."
+            },
+            {
+                name: "Sick Chicken (New Castle)",
+                url: "https://placehold.co/150x150/fffbeb/d97706?text=New+Castle",
+                mimeType: "image/png",
+                expectedDiagnosis: "New Castle Disease",
+                expectedTreatment: "No specific cure; focus on supportive care. Implement strict biosecurity measures. Vaccination is key for prevention."
+            },
+            {
+                name: "Sick Chicken (Coccidiosis)",
+                url: "https://placehold.co/150x150/ecfdf5/047857?text=Coccidiosis",
+                mimeType: "image/png",
+                expectedDiagnosis: "Coccidiosis",
+                expectedTreatment: "Administer anticoccidial drugs. Improve litter management, ventilation, and sanitation to reduce moisture."
+            }
+        ];
+
+        /**
+         * Renders or re-renders the entire application UI based on the current global state.
+         * This function acts like a "render" method in a UI framework, updating the DOM.
+         */
+        function renderApp() {
+            const appContainer = document.getElementById('app');
+            if (!appContainer) {
+                console.error("App container not found! Cannot render application.");
+                return; // Exit if the main container is not available
+            }
+
+            // Construct the HTML content using template literals and current state variables
+            appContainer.innerHTML = `
+                <h1 class="text-3xl md:text-4xl font-extrabold text-center text-gray-800 mb-6 border-b-2 border-green-500 pb-3">
+                    Poultry Health Assistant
+                </h1>
+
+                <p class="text-gray-600 text-center mb-8 text-lg">
+                    Upload an image of your poultry to get a preliminary diagnosis and treatment suggestions.
+                </p>
+
+                <!-- Input Form for image upload -->
+                <div class="space-y-6 mb-8">
+                    <div>
+                        <label for="imageUpload" class="block text-gray-700 text-sm font-medium mb-2">
+                            Upload Image (e.g., affected bird, lesion):
+                        </label>
+                        <input
+                            type="file"
+                            id="imageUpload"
+                            accept="image/*"
+                            class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-400 focus:border-transparent transition duration-200 ease-in-out file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                        />
+                        ${imagePreviewUrl ? `
+                            <div class="mt-4 flex justify-center">
+                                <img src="${imagePreviewUrl}" alt="Selected Preview" class="max-w-xs max-h-48 rounded-lg shadow-md border border-gray-200" />
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Sample Images Section -->
+                <div class="mt-8">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-3">Or try a sample image:</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        ${sampleImages.map((img, index) => `
+                            <button
+                                type="button"
+                                data-sample-index="${index}"
+                                class="sample-image-btn bg-gray-200 text-gray-800 py-2 px-3 rounded-lg text-sm font-medium hover:bg-gray-300 transition duration-200 ease-in-out
+                                    ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
+                                "
+                                ${isLoading ? 'disabled' : ''}
+                            >
+                                ${img.name}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <!-- The 'Get Diagnosis' Button -->
+                <button
+                    id="diagnoseButton" style="color:blue; "
+                    ${isLoading ? 'disabled' : ''} <!-- Disable button when loading -->
+                    <class="w-full mt-8 py-3 px-6 rounded-lg text-white font-semibold text-lg transition-all duration-300 ease-in-out
+                        ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 active:bg-green-800 shadow-md hover:shadow-lg transform hover:-translate-y-0.5'}
+                    "
+                >
+                    ${isLoading ? `
+                        <div class="flex items-center justify-center">
+                            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Diagnosing...
+                        </div>
+                    ` : 'Get Diagnosis'}
+                </button>
+
+                <!-- Error Message Display -->
+                ${error ? `
+                    <div class="mt-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
+                        <strong class="font-bold">Error!</strong>
+                        <span class="block sm:inline ml-2">${error}</span>
+                    </div>
+                ` : ''}
+
+                <!-- Diagnosis Results Display -->
+                ${(diagnosis || treatment) ? `
+                    <div class="mt-8 pt-6 border-t-2 border-dashed border-gray-300">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4 text-center">Diagnosis Results</h2>
+
+                        <div class="bg-blue-50 border-l-4 border-blue-400 text-blue-800 p-4 rounded-lg shadow-sm mb-4">
+                            <p class="font-semibold text-lg mb-1">Diagnosis:</p>
+                            <p class="text-xl font-bold text-blue-900">${diagnosis || 'Awaiting Diagnosis...'}</p>
+                        </div>
+
+                        <div class="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 p-4 rounded-lg shadow-sm">
+                            <p class="font-semibold text-lg mb-1">Suggested Treatment:</p>
+                            <p class="text-base">${treatment || 'Awaiting Treatment Suggestions...'}</p>
+                        </div>
+                    </div>
+                ` : ''}
+
+                <!-- Disclaimer -->
+                <div class="mt-8 text-center text-sm text-gray-500 border-t pt-4 border-gray-200">
+                    <p>
+                        <span class="font-bold">Disclaimer:</span> This application provides preliminary information for health management purposes only. For accurate diagnosis and treatment, always consult a qualified veterinarian.
+                    </p>
+                </div>
+            `;
+
+            // IMPORTANT: Re-attach event listeners after innerHTML updates the DOM
+            // This is crucial because `innerHTML` replaces the entire content,
+            // destroying previous event listeners.
+            const imageUploadElement = document.getElementById('imageUpload');
+            if (imageUploadElement) {
+                imageUploadElement.addEventListener('change', handleImageChange);
+            }
+            const diagnoseButtonElement = document.getElementById('diagnoseButton');
+            if (diagnoseButtonElement) {
+                diagnoseButtonElement.addEventListener('click', handleDiagnose);
+            }
+            // Attach event listeners to new sample image buttons
+            document.querySelectorAll('.sample-image-btn').forEach(button => {
+                button.addEventListener('click', loadSampleImage);
+            });
+        }
+
+        /**
+         * Handles the change event of the image upload input.
+         * Updates the selectedImage and imagePreviewUrl state variables.
+         * @param {Event} event The change event from the file input.
+         */
+        function handleImageChange(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedImage = file;
+                // Create a URL for showing a preview of the selected image
+                imagePreviewUrl = URL.createObjectURL(file);
+                error = ''; // Clear any previous image-related errors
+            } else {
+                selectedImage = null;
+                imagePreviewUrl = null;
+            }
+            renderApp(); // Re-render the UI to display the new image preview or clear it
+        }
+
+        /**
+         * Loads a sample image from a predefined URL and sets it as the selected image.
+         * @param {Event} event The click event from a sample image button.
+         */
+        async function loadSampleImage(event) {
+            const index = event.target.dataset.sampleIndex;
+            const sample = sampleImages[index];
+
+            // Set loading state and clear previous results/errors
+            isLoading = true;
+            diagnosis = '';
+            treatment = '';
+            error = '';
+            renderApp(); // Update UI to show loading spinner and clear old output
+
+            try {
+                const response = await fetch(sample.url);
+                if (!response.ok) {
+                    throw new Error(`Failed to load sample image: ${response.statusText}`);
+                }
+                const blob = await response.blob();
+
+                // Create a File-like object from the Blob. This allows FileReader to work with it.
+                // The filename and type are important for the Gemini API call.
+                const file = new File([blob], sample.name.replace(/\s+/g, '_') + '.png', { type: sample.mimeType, lastModified: Date.now() });
+
+                selectedImage = file;
+                imagePreviewUrl = URL.createObjectURL(file);
+                error = ''; // Clear any errors
+                // Directly set the diagnosis and treatment based on the sample data model
+                diagnosis = sample.expectedDiagnosis;
+                treatment = sample.expectedTreatment;
+
+            } catch (err) {
+                console.error("Error loading sample image:", err);
+                error = `Failed to load sample image: ${err.message}.`;
+                selectedImage = null; // Clear image if load failed
+                imagePreviewUrl = null;
+                diagnosis = '';
+                treatment = '';
+            } finally {
+                isLoading = false; // Clear loading state
+                renderApp(); // Re-render to show loaded image or error
+            }
+        }
+
+        /**
+         * Handles the click event of the Diagnose button.
+         * Initiates the diagnosis process by reading the image and calling the AI API.
+         */
+        async function handleDiagnose() {
+            // Set loading state and clear previous results/errors
+            isLoading = true;
+            diagnosis = '';
+            treatment = '';
+            error = '';
+            renderApp(); // Re-render to show loading spinner and clear old output
+
+            if (!selectedImage) {
+                error = 'Please upload an image or select a sample image for diagnosis.';
+                isLoading = false;
+                renderApp(); // Re-render to show error message
+                return; // Stop execution if no image is selected
+            }
+
+            let imageData = null;
+            try {
+                const reader = new FileReader();
+                // Read the file as a Data URL (Base64 encoded string)
+                reader.readAsDataURL(selectedImage);
+
+                // Wait for the FileReader to complete reading the file
+                await new Promise((resolve, reject) => {
+                    reader.onloadend = () => {
+                        // Extract the Base64 part from the Data URL (remove "data:image/png;base64,")
+                        imageData = reader.result.split(',')[1];
+                        resolve();
+                    };
+                    reader.onerror = () => {
+                        reject(new Error('Failed to read image file.'));
+                    };
+                });
+
+                // Once image data is ready, send the request to the AI model
+                await sendDiagnosisRequest(imageData);
+
+            } catch (err) {
+                console.error("Error during image processing or diagnosis initiation:", err);
+                error = `Failed to process image: ${err.message}`;
+                diagnosis = '';
+                treatment = '';
+            } finally {
+                isLoading = false; // End loading state
+                renderApp(); // Re-render to show final state (diagnosis/treatment or error)
+            }
+        }
+
+        /**
+         * Sends the image and prompt to the Gemini API to get a diagnosis and treatment.
+         * @param {string} base64ImageData The Base64 encoded string of the image.
+         */
+        async function sendDiagnosisRequest(base64ImageData) {
+            // IMPORTANT: If you are running this file directly from your local filesystem (e.g., file:///...),
+            // you might encounter CORS errors or API key issues.
+            // For production or robust local testing, consider serving this file via a simple local web server
+            // (e.g., Python's http.server, Node.js's http-server package, or a full framework like Flask/Django).
+
+            // IMPORTANT: You MUST provide your Gemini API key here to make the API call work.
+            // Get your API key from Google AI Studio: https://aistudio.google.com/
+            // Replace "YOUR_GEMINI_API_KEY_HERE" with your actual key.
+            const API_KEY = "AIzaSyD6soOv5iaYbiGcQUVKvKu4GL1uXFRB9lY"; // <--- YOUR API KEY IS NOW INSERTED HERE
+
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
+
+            // Check if API_KEY is still the placeholder or empty.
+            // This check is primarily for debugging purposes, as the key is now directly set.
+            if (API_KEY === "YOUR_GEMINI_API_KEY_HERE" || API_KEY === "" || API_KEY.startsWith("AIzaSyD6soOv5iaYbiGcQUVKvKu4GL1uXFRB9lY") === false) { // Added a more specific check for the provided key
+                console.error("API Key is missing or is the default placeholder. Please replace 'YOUR_GEMINI_API_KEY_HERE' with your actual Gemini API key.");
+                error = "API key missing or invalid. Please check the code and insert your Gemini API key.";
+                diagnosis = '';
+                treatment = '';
+                isLoading = false;
+                renderApp();
+                return; // Stop execution
+            }
+
+            // Check if the selected image is one of the sample images
+            // If it is, provide the pre-defined diagnosis and treatment
+            const isSampleImage = sampleImages.find(sample => sample.url === imagePreviewUrl); // Check against imagePreviewUrl which is derived from loaded sample
+            if (isSampleImage) {
+                diagnosis = isSampleImage.expectedDiagnosis;
+                treatment = isSampleImage.expectedTreatment;
+                console.log("Using pre-defined diagnosis for sample image:", diagnosis);
+                return; // Exit function after setting predefined diagnosis
+            }
+
+
+            try {
+                let chatHistory = [];
+                let prompt = `Analyze the provided image of poultry and provide a concise diagnosis (one of Salmonella, New Castle Disease, Coccidiosis, or Healthy) and a suggested treatment.`;
+
+                // Determine MIME type. Provide a fallback if selectedImage is somehow undefined (though it should be checked earlier).
+                const mimeType = selectedImage ? selectedImage.type : 'application/octet-stream';
+
+                // Construct the chat history with the prompt and inline image data
+                chatHistory.push({
+                    role: "user",
+                    parts: [
+                        { text: prompt },
+                        {
+                            inlineData: {
+                                mimeType: mimeType,
+                                data: base64ImageData
+                            }
+                        }
+                    ]
+                });
+
+                // Define the payload for the Gemini API request
+                const payload = {
+                    contents: chatHistory,
+                    generationConfig: {
+                        responseMimeType: "application/json", // Request JSON output
+                        responseSchema: { // Define the structure of the expected JSON response
+                            type: "OBJECT",
+                            properties: {
+                                "diagnosis": { "type": "STRING" },
+                                "treatment": { "type": "STRING" }
+                            },
+                            "propertyOrdering": ["diagnosis", "treatment"] // Ensure order
+                        }
+                    }
+                };
+
+                // Make the API request using fetch
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                // Check if the HTTP response was successful (status 2xx)
+                if (!response.ok) {
+                    const errorData = await response.json(); // Attempt to parse error details
+                    throw new Error(errorData.error.message || `API response status: ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                // Validate the structure of the AI's response
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+
+                    const jsonResponse = result.candidates[0].content.parts[0].text;
+                    const parsedJson = JSON.parse(jsonResponse); // Parse the AI's JSON string
+
+                    // Update global state with the AI's diagnosis and treatment
+                    diagnosis = parsedJson.diagnosis || 'Unknown';
+                    treatment = parsedJson.treatment || 'Consult a veterinarian.';
+                } else {
+                    throw new Error('No valid content received from the AI model.');
+                }
+
+            } catch (err) {
+                console.error("Error during API request to Gemini:", err);
+                error = `Failed to get diagnosis from AI: ${err.message}. Please check your network or API key.`;
+                diagnosis = ''; // Clear previous diagnosis on error
+                treatment = ''; // Clear previous treatment on error
+            } finally {
+                    isLoading = false; // Always set loading to false after completion or error
+                renderApp(); // Re-render to show updated state (results or error)
+            }
+        }
+
+        // Initial render of the application when the DOM is fully loaded.
+        // This ensures all HTML elements are available before script.js tries to access them.
+        document.addEventListener('DOMContentLoaded', renderApp);
+    </script>
+</body>
+</html>
